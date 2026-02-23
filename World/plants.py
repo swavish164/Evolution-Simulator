@@ -73,8 +73,8 @@ class NewPlant:
             dx = math.sin(wind_rad) * wind_speed
             dy = -math.cos(wind_rad) * wind_speed
 
-            new_row = round(self.position[0] + dy)
-            new_col = round(self.position[1] + dx)
+            new_row = max(0, min(round(self.position[0] + dy), len(world.grid) - 1))
+            new_col = max(0, min(round(self.position[1] + dx), len(world.grid[0]) - 1))
 
             for _ in range(self.genone['seeds_released']):
                 new_seed = NewSeed((new_row + random.uniform(-0.5,0.5), new_col + random.uniform(-0.5,0.5)), self.genone)
@@ -94,9 +94,16 @@ class NewSeed:
 
     def update(self, world):
         self.age += 0.001
-        if (self.age >= self.genome['germination_age']):
-            new_plant = NewPlant(self.position, self.genome)
+        if self.age >= self.genome['germination_age']:
+            clamped_row = max(0, min(int(self.position[0]), len(world.grid) - 1))
+            clamped_col = max(0, min(int(self.position[1]), len(world.grid[0]) - 1))
+            clamped_position = (clamped_row, clamped_col)
+
+            new_plant = NewPlant(clamped_position, self.genome, tile_offset=(
+                random.uniform(0.1, 0.9),
+                random.uniform(0.1, 0.9)
+            ))
             world.plants[0].append(new_plant)
-            world.plants[1][int(new_plant.position[0])][int(new_plant.position[1])].append(new_plant)
+            world.plants[1][clamped_row][clamped_col].append(new_plant)
             world.seeds.remove(self)
 

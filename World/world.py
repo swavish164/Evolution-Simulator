@@ -2,7 +2,7 @@ import pygame
 from numpy import random
 from Map.mapGeneration import generate_initial_map, generate_map
 from World.plants import add_plants
-from World.agents import add_agents
+from World.agents import add_packs
 
 grass = (21, 122, 17)
 water = (0, 0, 255)
@@ -12,6 +12,7 @@ sand = (255, 255, 0)
 class World:
     def __init__(
         self,
+        packs,
         agents,
         food,
         grid=None,
@@ -42,16 +43,12 @@ class World:
         self.grid = grid or generate_map(
             generate_initial_map(self.map_height, self.map_width)
         )
-        self.agents = add_agents(self.grid, 50)
+        self.packs, self.agents = add_packs(self.grid, num_packs=random.randint(2,5), pack_size=random.randint(3,8))
         self.plants = add_plants(self.grid, plant_probability)
         self.seeds = seeds
         self.wind = wind
         self.increasingChange = increasing_change
         self.increasingDirection = increasing_direction
-
-    def update(self):
-        for agent in self.agents:
-            agent.update(self)
 
     def draw(self):
         self.make_map()
@@ -62,7 +59,6 @@ class World:
         pygame.display.flip()
 
     def each_tick(self):
-        self.update()
         self.draw()
         self.update_wind(self.wind)
         self.update_plants()
@@ -89,15 +85,15 @@ class World:
             )
 
     def display_agents(self, agents):
-        for agent in agents:
+        for agent in self.agents:
             pygame.draw.circle(
                 self.screen,
                 agent.colour,
                 (
-                    self.offset_x + agent.position[1] * self.tile_size + self.tile_size // 2,
-                    self.offset_y + agent.position[0] * self.tile_size + self.tile_size // 2,
+                    int(self.offset_x + agent.position[1] * self.tile_size + self.tile_size // 2),
+                    int(self.offset_y + agent.position[0] * self.tile_size + self.tile_size // 2),
                 ),
-                self.tile_size // 4,
+                max(1, self.tile_size // 4),
             )
 
     def display_seeds(self, seeds):
@@ -164,7 +160,6 @@ class World:
         self.wind[1] = wind_strength
         #print(f"Wind direction: {wind_direction:.2f} degrees, Wind strength: {wind_strength:.2f}")
 
-
     def update_plants(self):
         for plant in self.plants[0]:
             plant.update(self)
@@ -172,12 +167,11 @@ class World:
             seed.update(self)
 
     def update_agents(self):
-        for agent in self.agents:
+        for agent in list(self.agents):
             agent.update(self)
-        pass
 
 
-newWorld = World([], [], None, map_width=100, map_height=100)
+newWorld = World([], [], [], None, map_width=100, map_height=100)
 
 
 done = False
@@ -187,4 +181,3 @@ while not done:
             done = True
     newWorld.each_tick()
     newWorld.draw()
-
