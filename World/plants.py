@@ -3,15 +3,20 @@ import math
 
 def add_plants(world, plant_probability):
     plants = []
+    plants_tile = [[[] for _ in range(len(world[i]))] for i in range(len(world))]
     for i in range(len(world)):
         for j in range(len(world[i])):
             if world[i][j] == 0:
                 if random.random() < plant_probability:
-                    plants.append(NewPlant((i, j)))
+                    new_plant = NewPlant((i, j))
+                    plants.append(new_plant)
+                    plants_tile[i][j].append(new_plant)
             if world[i][j] == 3:
                 if random.random() < plant_probability * 5:
-                    plants.append(NewPlant((i, j)))
-    return plants
+                    new_plant = NewPlant((i, j))
+                    plants.append(new_plant)
+                    plants_tile[i][j].append(new_plant)
+    return [plants, plants_tile]
 
 
 class NewPlant:
@@ -57,7 +62,8 @@ class NewPlant:
         if self.dead:
             self.deadTime += 0.001
             if self.deadTime > 0.05:
-                world.plants.remove(self)
+                world.plants[0].remove(self)
+                world.plants[1][int(self.position[0])][int(self.position[1])].remove(self)
             return
         if self.age >= self.genone['pollination_age']  and self.pollinated == False:
             wind_direction = world.wind[0]
@@ -90,6 +96,7 @@ class NewSeed:
         self.age += 0.001
         if (self.age >= self.genome['germination_age']):
             new_plant = NewPlant(self.position, self.genome)
-            world.plants.append(new_plant)
+            world.plants[0].append(new_plant)
+            world.plants[1][int(new_plant.position[0])][int(new_plant.position[1])].append(new_plant)
             world.seeds.remove(self)
 

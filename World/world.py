@@ -2,6 +2,7 @@ import pygame
 from numpy import random
 from Map.mapGeneration import generate_initial_map, generate_map
 from World.plants import add_plants
+from World.agents import add_agents
 
 grass = (21, 122, 17)
 water = (0, 0, 255)
@@ -19,13 +20,12 @@ class World:
         map_height=100,
         plant_probability=0.025,
         wind=None,
-        increasingDirection = True,
-        increasingChange = True,
+        increasing_direction = True,
+        increasing_change = True,
         seeds = []
     ):
         if wind is None:
             wind = [0, 0]
-        self.agents = list(agents)
         self.food = list(food)
         self.map_width = int(map_width)
         self.map_height = int(map_height)
@@ -42,11 +42,12 @@ class World:
         self.grid = grid or generate_map(
             generate_initial_map(self.map_height, self.map_width)
         )
+        self.agents = add_agents(self.grid, 50)
         self.plants = add_plants(self.grid, plant_probability)
         self.seeds = seeds
         self.wind = wind
-        self.increasingChange = increasingChange
-        self.increasingDirection = increasingDirection
+        self.increasingChange = increasing_change
+        self.increasingDirection = increasing_direction
 
     def update(self):
         for agent in self.agents:
@@ -54,8 +55,8 @@ class World:
 
     def draw(self):
         self.make_map()
-        for agent in self.agents:
-            agent.draw()
+        #for agent in self.agents:
+            #agent.draw()
         for food in self.food:
             food.draw()
         pygame.display.flip()
@@ -65,9 +66,10 @@ class World:
         self.draw()
         self.update_wind(self.wind)
         self.update_plants()
+        self.update_agents()
 
     def display_plants(self, plants):
-        for plant in plants:
+        for plant in plants[0]:
             pixel_x = (self.offset_x
                        + plant.position[1] * self.tile_size
                        + int(plant.tile_offset[1] * self.tile_size))
@@ -84,6 +86,18 @@ class World:
                     self.tile_size // 4,
                     int(plant.size * self.tile_size),
                 ),
+            )
+
+    def display_agents(self, agents):
+        for agent in agents:
+            pygame.draw.circle(
+                self.screen,
+                agent.colour,
+                (
+                    self.offset_x + agent.position[1] * self.tile_size + self.tile_size // 2,
+                    self.offset_y + agent.position[0] * self.tile_size + self.tile_size // 2,
+                ),
+                self.tile_size // 4,
             )
 
     def display_seeds(self, seeds):
@@ -128,6 +142,7 @@ class World:
                 )
         self.display_plants(self.plants)
         self.display_seeds(self.seeds)
+        self.display_agents(self.agents)
         pygame.display.flip()
 
     def update_wind(self, wind):
@@ -151,17 +166,16 @@ class World:
 
 
     def update_plants(self):
-        for plant in self.plants:
+        for plant in self.plants[0]:
             plant.update(self)
         for seed in self.seeds:
             seed.update(self)
-    def update_prey(self):
-        # Placeholder for prey update logic
+
+    def update_agents(self):
+        for agent in self.agents:
+            agent.update(self)
         pass
 
-    def update_predators(self):
-        # Placeholder for predator update logic
-        pass
 
 newWorld = World([], [], None, map_width=100, map_height=100)
 
