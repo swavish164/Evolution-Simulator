@@ -2,7 +2,7 @@ import pygame
 from numpy import random
 from Map.mapGeneration import generate_initial_map, generate_map
 from World.plants import add_plants
-from World.agents import add_packs
+from World.agents import add_packs, assign_pack_leader
 
 grass = (21, 122, 17)
 water = (0, 0, 255)
@@ -172,7 +172,7 @@ class World:
 
 
 newWorld = World([], [], [], None, map_width=100, map_height=100)
-
+assign_pack_leader(newWorld)
 
 done = False
 while not done:
