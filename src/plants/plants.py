@@ -37,7 +37,7 @@ class NewPlant:
 
     def random_genome(self, parent_genome=None):
         if parent_genome is None:
-            growth_rate = random.uniform(0, 0.005)
+            growth_rate = random.uniform(0.001, 0.005)
             max_size = random.uniform(1, 3)
             max_age = random.uniform(1, int(max_size)*random.uniform(1,2))
             pollination_age = random.uniform(max_age/4, max_age * 3/4)
@@ -52,20 +52,23 @@ class NewPlant:
             seeds_released = parent_genome.seeds_released + random.choices([-1, 0, 1], weights=[0.05, 0.8, 0.15])[0]
         return {'growth_rate': growth_rate, 'max_size': max_size, 'max_age': max_age, 'pollination_age': pollination_age, 'germination_age': germination_age, 'seeds_released': seeds_released}
 
-    def update(self, world):
-        self.age += 0.001
+    def update(self, world, dt):
+        dt_scaled = dt / 100
+        self.age += 0.001 * dt_scaled
         if self.age >= self.genone['max_age'] and not self.dead:
             self.dead = True
             self.colour = (71, 62, 8)
             self.deadTime = 0
             return
         if self.dead:
-            self.deadTime += 0.001
+            self.deadTime += dt_scaled
             if self.deadTime > 0.05:
-                world.plants[0].remove(self)
+                if self in world.plants[0]:
+                    world.plants[0].remove(self)
                 world.plants[1][int(self.position[0])][int(self.position[1])].remove(self)
             return
-        if self.age >= self.genone['pollination_age']  and self.pollinated == False:
+
+        if self.age >= self.genone['pollination_age'] and not self.pollinated:
             wind_direction = world.wind[0]
             wind_speed = world.wind[1]
 
@@ -77,11 +80,14 @@ class NewPlant:
             new_col = max(0, min(round(self.position[1] + dx), len(world.grid[0]) - 1))
 
             for _ in range(self.genone['seeds_released']):
-                new_seed = NewSeed((new_row + random.uniform(-0.5,0.5), new_col + random.uniform(-0.5,0.5)), self.genone)
+                new_seed = NewSeed(
+                    (new_row + random.uniform(-0.5, 0.5), new_col + random.uniform(-0.5, 0.5)),
+                    self.genone
+                )
                 world.seeds.append(new_seed)
             self.pollinated = True
 
-        self.size += self.genone['growth_rate']
+        self.size += self.genone['growth_rate'] * dt_scaled
         if self.size > self.genone['max_size']:
             self.size = self.genone['max_size']
 
@@ -92,8 +98,9 @@ class NewSeed:
         self.genome = genome
         self.age = 0
 
-    def update(self, world):
-        self.age += 0.001
+    def update(self, world, dt):
+        dt_scaled = dt / 100
+        self.age += 0.001 * dt_scaled
         if self.age >= self.genome['germination_age']:
             clamped_row = max(0, min(int(self.position[0]), len(world.grid) - 1))
             clamped_col = max(0, min(int(self.position[1]), len(world.grid[0]) - 1))

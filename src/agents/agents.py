@@ -46,11 +46,12 @@ class agent:
         self.mated = [False, 0]
         self.leader = False
         self.pack_speed = 1.0
+        self.base_speed = None
 
     def random_genome(self, parents_genome =None):
         if parents_genome is None:
             size = random.uniform(0.1, 3)
-            speed = random.uniform(0.1, 1)
+            speed = random.uniform(0.5, 1)
             vision_range = random.uniform(3, 10)
             metabolism_rate = random.uniform(0.0001, 0.001)
             max_age = random.uniform(1, 10)
@@ -197,9 +198,20 @@ class agent:
 
     def check_follow_leader(self, world):
         leader = next((a for a in world.packs[self.pack] if a.leader), None)
-        self.pack_speed = (min(world.packs[self.pack], key=lambda a: a.genome['speed']).genome['speed'])
+        following = [a for a in world.packs[self.pack] if a.target_type in ('wander', 'return', 'leader') and not a.dead]
+        if following:
+            self.pack_speed = min(a.base_speed for a in following)
+        else:
+            self.pack_speed = self.base_speed
+
         if self.leader:
             self.colour = (255, 215, 0)
+            pack_members = [a for a in world.packs[self.pack] if a is not self and not a.dead]
+            if pack_members:
+                max_dist = max(self.wrapped_distance(a.position, world) for a in pack_members)
+                if max_dist > 8:
+                    self.pack_speed = 0
+                    return
             self.pick_random_target(world)
 
         elif leader is not None:
@@ -211,26 +223,33 @@ class agent:
                     leader.position[1] % len(world.grid[0])
                 ]
                 self.target_type = 'return'
+                self.pack_speed = self.base_speed
             else:
                 self.target = [
                     (self.position[0] + random.uniform(-2, 2)) % len(world.grid),
                     (self.position[1] + random.uniform(-2, 2)) % len(world.grid[0])
                 ]
-                #if leader.waiting:
-                    #self.pack_speed = 0
                 self.target_type = 'wander'
         else:
             self.pick_random_target(world)
 
-    def update(self, world):
-        self.age += 0.001
+    def update(self, world, dt):
+        dt_scaled = dt / 100  # convert ms to seconds
+
+        if self.dead:
+            self.dead_time += dt_scaled
+            if self.dead_time > 0.05:
+                self.remove_from_world(world)
+            return
+
+        self.age += 0.001 * dt_scaled
         if self.age >= self.genome['max_age']:
             self.remove_from_world(world)
             return
 
         if not self.waiting:
-            self.energy -= self.genome['metabolism_rate']
-            self.thirst += self.genome['metabolism_rate'] * 0.5
+            self.energy -= self.genome['metabolism_rate'] * dt_scaled
+            self.thirst += self.genome['metabolism_rate'] * 0.5 * dt_scaled
 
         if self.energy <= 0 and not self.dead:
             self.dead = True
@@ -239,14 +258,11 @@ class agent:
         if self.thirst > 1:
             self.dead = True
 
-        if self.dead:
-            self.dead_time += 0.001
-            if self.dead_time > 0.05:
-                self.remove_from_world(world)
-            return
+
+        current_speed = self.base_speed
 
         if self.energy < 0.2:
-            self.genome['speed'] = max(0.1, self.genome['speed'] * (self.energy / 0.2))
+            current_speed = max(0.1, self.genome['speed'] * (self.energy / 0.2))
 
         if self.age > self.genome['max_age'] * 0.75:
             if self.mating:
@@ -257,24 +273,21 @@ class agent:
             if self.leader:
                 self.leader = False
                 assign_pack_leader(world, self.pack)
-            self.genome['speed'] = max(0.1, self.genome['speed'] * (
-                        1 - (self.age - self.genome['max_age'] * 0.75) / (self.genome['max_age'] * 0.25)))
+            age_factor = 1 - (self.age - self.genome['max_age'] * 0.75) / (self.genome['max_age'] * 0.25)
+            current_speed = max(0.1, current_speed * age_factor)
+        self.pack_speed = current_speed
 
         if self.genome['max_age'] * 0.4 < self.age <= self.genome['max_age'] * 0.75:
             self.mating = True
 
-        if self.mating and not self.mated[0]:
-            self.pack_speed = self.genome['speed']
-            self.looking_for_mate(world)
-
         if self.mated[0]:
-            self.mated[1] += 0.001
-            if self.mated[1] > self.genome['max_age']*0.1:
+            self.mated[1] += dt_scaled
+            if self.mated[1] > self.genome['max_age'] * 0.1:
                 self.mated = [False, 0]
 
         if self.waiting:
             if self.target_type == 'food' and self.target_plant is not None:
-                self.eating_time += 0.002
+                self.eating_time += 0.01 * dt_scaled
                 if self.eating_time >= self.target_plant.size * 0.5:
                     self.energy = min(1.0, self.energy + self.target_plant.size * 0.5)
                     if self.target_plant in world.plants[0]:
@@ -288,7 +301,7 @@ class agent:
                     self.target_type = None
                     self.colour = (255, 0, 255)
             elif self.target_type == 'water':
-                self.thirst = max(0, self.thirst - 0.01)
+                self.thirst = max(0, self.thirst - 0.01 * dt_scaled)
                 if self.thirst == 0:
                     self.waiting = False
                     self.target = None
@@ -296,19 +309,26 @@ class agent:
                     self.colour = (255, 0, 255)
             return
 
-        if self.thirst > 0.5:
+        food_threshold = 0.5 * (self.genome['metabolism_rate'] / 0.0005)
+        water_threshold = 0.5 * (self.genome['metabolism_rate'] / 0.0005)
+
+        if self.thirst > water_threshold and self.target_type != 'water':
             self.colour = (0, 0, 255)
-            self.pack_speed = self.genome['speed']
+            self.pack_speed = self.base_speed
             self.seek_resource(world, 'water')
-        if self.energy < 0.5:
+
+        if self.energy < food_threshold and self.target_type != 'food':
             self.colour = (255, 0, 0)
-            self.pack_speed = self.genome['speed']
+            self.pack_speed = self.base_speed
             self.seek_resource(world, 'food')
+
+        if self.mating and not self.mated[0]:
+            self.pack_speed = self.genome['speed']
+            self.looking_for_mate(world)
 
         if self.target is None:
             if self.pack is not None:
                 self.check_follow_leader(world)
-
 
         if self.target is not None:
             distance = self.wrapped_distance(self.target, world)
@@ -330,8 +350,8 @@ class agent:
                     self.target = None
                     self.target_type = None
 
-        new_row = self.position[0] + self.velocity[0] * self.pack_speed
-        new_col = self.position[1] + self.velocity[1] * self.pack_speed
+        new_row = self.position[0] + self.velocity[0] * self.pack_speed * dt_scaled
+        new_col = self.position[1] + self.velocity[1] * self.pack_speed * dt_scaled
         self.position[0] = new_row % len(world.grid)
         self.position[1] = new_col % len(world.grid[0])
 
@@ -342,6 +362,7 @@ def assign_pack_leader(world, pack_number=None):
         if not pack:
             continue
         for a in pack:
+            a.base_speed = a.genome['speed']
             a.leader = False
         leader = max(pack, key=lambda a: a.genome['size'])
         leader.leader = True

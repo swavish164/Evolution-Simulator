@@ -1,8 +1,8 @@
 import pygame
 from numpy import random
-from Map.mapGeneration import generate_initial_map, generate_map
-from World.plants import add_plants
-from World.agents import add_packs, assign_pack_leader
+from src.world.mapGeneration import generate_initial_map, generate_map
+from src.plants.plants import add_plants
+from src.agents.agents import add_packs, assign_pack_leader
 
 grass = (21, 122, 17)
 water = (0, 0, 255)
@@ -58,11 +58,11 @@ class World:
             food.draw()
         pygame.display.flip()
 
-    def each_tick(self):
+    def each_tick(self,time):
         self.draw()
         self.update_wind(self.wind)
-        self.update_plants()
-        self.update_agents()
+        self.update_plants(time)
+        self.update_agents(time)
 
     def display_plants(self, plants):
         for plant in plants[0]:
@@ -160,24 +160,28 @@ class World:
         self.wind[1] = wind_strength
         #print(f"Wind direction: {wind_direction:.2f} degrees, Wind strength: {wind_strength:.2f}")
 
-    def update_plants(self):
-        for plant in self.plants[0]:
-            plant.update(self)
-        for seed in self.seeds:
-            seed.update(self)
-
-    def update_agents(self):
+    def update_agents(self, ticks):
         for agent in list(self.agents):
-            agent.update(self)
+            agent.update(self, ticks)
+
+    def update_plants(self, ticks):
+        for plant in self.plants[0]:
+            plant.update(self, ticks)
+        for seed in self.seeds:
+            seed.update(self, ticks)
 
 
 newWorld = World([], [], [], None, map_width=100, map_height=100)
 assign_pack_leader(newWorld)
+
+clock = pygame.time.Clock()
+FPS = 60
 
 done = False
 while not done:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             done = True
-    newWorld.each_tick()
+    dt = clock.tick(FPS)
+    newWorld.each_tick(dt)
     newWorld.draw()
