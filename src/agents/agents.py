@@ -1,8 +1,15 @@
+from __future__ import annotations
+
 import numpy as np
+from typing import TYPE_CHECKING
 import random
 import math
+from src.agents.agent_constants import *
 
-def add_packs(world, num_packs, pack_size):
+if TYPE_CHECKING:
+    from src.world.world import World
+
+def add_packs(world: World, num_packs: int, pack_size: int):
     packs = []
     agents = []
     for i in range(num_packs):
@@ -16,16 +23,15 @@ def add_packs(world, num_packs, pack_size):
                 pack_center[1] + random.uniform(-2, 2)
             ]
             energy = random.uniform(0.5, 1)
-            agent_instance = agent(position, [0, 0], energy, genome, age, i)
+            agent_instance = agent(position, [0, 0], energy, age, genome, i)
             agent_instance.genome = agent_instance.random_genome()
             pack.append(agent_instance)
             agents.append(agent_instance)
         packs.append(pack)
     return packs, agents
 
-
 class agent:
-    def __init__(self, position, velocity, energy, genome, age,pack=None):
+    def __init__(self, position: list[float], velocity: list[float], energy: float, age: float,genome: dict | None = None,pack: int | None =None):
         self.position = position
         self.velocity = velocity
         self.energy = energy
@@ -47,31 +53,42 @@ class agent:
         self.leader = False
         self.pack_speed = 1.0
         self.base_speed = None
+        self.heading = random.uniform(0, 2* math.pi)
+        self.speed = 0.5
 
-    def random_genome(self, parents_genome =None):
+    def random_genome(self, parents_genome:dict | None = None):
         if parents_genome is None:
-            size = random.uniform(0.1, 3)
-            speed = random.uniform(0.5, 1)
-            vision_range = random.uniform(3, 10)
-            metabolism_rate = random.uniform(0.0001, 0.001)
-            max_age = random.uniform(1, 10)
+            attributes = np.array([
+                random.uniform(0.1,3), # size
+                random.uniform(0.5,1), # speed
+                random.uniform(3,10), # vision range
+                random.uniform(0.0001,0.001), # metabolism rate
+                random.uniform(1,10), # max age
+            ])
+            network_weights = np.random.randn(112) * 0.5
+            return np.concatenate([attributes,network_weights])
 
         else:
-            size = parents_genome[random.randint(0,1)]['size'] + random.uniform(-0.05, 0.1)
-            speed = parents_genome[random.randint(0,1)]['speed'] + random.uniform(-0.05, 0.1)
-            vision_range = parents_genome[random.randint(0,1)]['vision_range'] + random.uniform(-0.05, 0.1)
-            metabolism_rate = parents_genome[random.randint(0,1)]['metabolism_rate'] + random.uniform(-0.0005, 0.001)
-            max_age = parents_genome[random.randint(0,1)]['max_age'] + random.uniform(-0.05, 0.1)
-        return {'size': size, 'speed': speed, 'vision_range': vision_range, 'metabolism_rate': metabolism_rate, 'max_age': max_age}
+            attributes = np.array([
+                parents_genome[random.randint(0,1)][GENOME_SIZE] + random.uniform(-0.05, 0.1),
+                parents_genome[random.randint(0,1)][GENOME_SPEED] + random.uniform(-0.05, 0.1),
+                parents_genome[random.randint(0,1)][GENOME_VISION] + random.uniform(-0.05, 0.1),
+                parents_genome[random.randint(0,1)][GENOME_METABOLISM] + random.uniform(-0.0005, 0.001),
+                parents_genome[random.randint(0,1)][GENOME_MAX_AGE] + random.uniform(-0.05, 0.1),
+            ])
+            mask = np.random.random(112) > 0.5
+            network_weights = np.where(mask, parents_genome[0][GENOME_NETWORK_START:], parents_genome[1][GENOME_NETWORK_START:])
+            network_weights += np.random.randn(112) * 0.05
+        return np.concatenate([attributes, network_weights])
 
 
     #def sense_danger(self):
         #for other_agent in world.agents:
-            #if other_agent is not self and np.linalg.norm(np.array(other_agent.position) - np.array(self.position)) < self.genome['vision_range']:
+            #if other_agent is not self and np.linalg.norm(np.array(other_agent.position) - np.array(self.position)) < self.genome[2]:
                 # Implement logic to determine if the other agent is a threat
         #return False
 
-    def remove_from_world(self, world):
+    def remove_from_world(self, world: World):
         if self in world.agents:
             world.agents.remove(self)
         for pack in world.packs:
@@ -79,10 +96,10 @@ class agent:
                 pack.remove(self)
                 break
 
-    def pick_random_target(self, world):
+    def pick_random_target(self, world: World):
         max_row = len(world.grid)
         max_col = len(world.grid[0])
-        vision = int(self.genome['vision_range'])
+        vision = int(self.genome[GENOME_VISION])
 
         angle_change = np.random.normal(loc=0, scale=15)
         self.target_dir = (self.target_dir + angle_change) % 360
@@ -94,8 +111,8 @@ class agent:
         self.target = [target_row, target_col]
         self.target_type = 'wander'
 
-    def seek_resource(self, world, resource_type):
-        vision = int(self.genome['vision_range'])
+    def seek_resource(self, world: World, resource_type: str):
+        vision = int(self.genome[GENOME_VISION])
         current_closest = None
         current_closest_dist = float('inf')
 
@@ -141,7 +158,7 @@ class agent:
             return True
         return False
 
-    def looking_for_mate(self, world):
+    def looking_for_mate(self, world: World):
         self.colour = (255, 105, 180)
 
         if self.target_type != 'mate' or self.target is None:
@@ -168,7 +185,7 @@ class agent:
                         child_genome = self.random_genome([partner.genome, self.genome])
                         child_position = [(self.position[0] + partner.position[0]) / 2,
                                           (self.position[1] + partner.position[1]) / 2]
-                        child_agent = agent(child_position, [0, 0], 1.0, child_genome, 0)
+                        child_agent = agent(child_position, [0, 0], 1.0, 0, child_genome)
                         world.agents.append(child_agent)
                         for pack in world.packs:
                             if self in pack:
@@ -187,7 +204,7 @@ class agent:
                     partner.target = None
                     partner.target_type = None
 
-    def wrapped_distance(self, target, world):
+    def wrapped_distance(self, target: list[float], world: World):
         max_row = len(world.grid)
         max_col = len(world.grid[0])
         dr = abs(self.position[0] - target[0])
@@ -196,7 +213,7 @@ class agent:
         dc = min(dc, max_col - dc)
         return math.sqrt(dr ** 2 + dc ** 2)
 
-    def check_follow_leader(self, world):
+    def check_follow_leader(self, world: World):
         leader = next((a for a in world.packs[self.pack] if a.leader), None)
         following = [a for a in world.packs[self.pack] if a.target_type in ('wander', 'return', 'leader') and not a.dead]
         if following:
@@ -233,7 +250,90 @@ class agent:
         else:
             self.pick_random_target(world)
 
-    def update(self, world, dt):
+    def get_neural_inputs(self, world: World):
+        nearest_food_angle = 0.0
+        nearest_food_distance = 1.0
+        nearest_predator_angle = 0.0
+        nearest_predator_distance = 1.0
+        predator_visible = 0.0
+        nearest_herdmate_angle = 0.0
+        nearest_herdmate_distance = 1.0
+
+        vision = self.genome[GENOME_VISION]
+        best_food_dist = float('inf')
+        best_predator_dist = float('inf')
+        best_herdmate_dist = float('inf')
+
+        for i in range(-int(vision), int(vision) + 1):
+            for j in range(-int(vision), int(vision) + 1):
+                if i * i + j * j > vision * vision:
+                    continue
+                row = (int(self.position[0]) + i) % len(world.grid)
+                col = (int(self.position[1]) + j) % len(world.grid[0])
+
+                plants_here = world.plants[1][row][col]
+                for plant in plants_here:
+                    if plant.age > 0.1:
+                        dist = math.sqrt(i * i + j * j)
+                        if dist < best_food_dist:
+                            best_food_dist = dist
+                            nearest_food_angle = self._angle_to(plant.position)
+                            nearest_food_distance = dist / vision
+
+        for a in world.agents:
+            if a is self:
+                continue
+            dist = self.wrapped_distance(a.position, world)
+            if dist > vision:
+                continue
+
+            if a.pack != self.pack:
+                if dist < best_predator_dist:
+                    best_predator_dist = dist
+                    nearest_predator_angle = self._angle_to(a.position)
+                    nearest_predator_distance = dist / vision
+                    predator_visible = 1.0
+            else:
+                if dist < best_herdmate_dist:
+                    best_herdmate_dist = dist
+                    nearest_herdmate_angle = self._angle_to(a.position)
+                    nearest_herdmate_distance = dist / vision
+
+        return [
+            nearest_predator_angle,
+            nearest_predator_distance,
+            predator_visible,
+            nearest_food_angle,
+            nearest_food_distance,
+            nearest_herdmate_angle,
+            nearest_herdmate_distance,
+            self.energy,
+        ]
+
+    def _angle_to(self, target_position: list[float]):
+        dr = target_position[0] - self.position[0]
+        dc = target_position[1] - self.position[1]
+        angle = math.degrees(math.atan2(dc, dr))
+        return angle / 180.0
+
+
+    def neural_network_decision(self, inputs):
+        W1 = self.genome[GENOME_NETWORK_START:GENOME_NETWORK_START+80].reshape(10, 8)
+        b1 = self.genome[GENOME_NETWORK_START+80:GENOME_NETWORK_START+90]
+        W2 = self.genome[GENOME_NETWORK_START+90:GENOME_NETWORK_START+110].reshape(2, 10)
+        b2 = self.genome[GENOME_NETWORK_START+110:GENOME_NETWORK_START+112]
+        hidden = np.tanh(W1 @ inputs + b1)
+        output = np.tanh(W2 @ hidden + b2)
+        return output
+
+    def apply_outputs(self, outputs: list[float], dt_scaled: float):
+        self.heading += outputs[0] * max_turn_rate * dt_scaled
+        self.speed = np.clip(self.speed + outputs[1] * 0.1,0.1, self.genome[GENOME_SPEED])
+
+        self.velocity[0] = math.sin(self.heading) * self.speed
+        self.velocity[1] = math.cos(self.heading) * self.speed
+
+    def update(self, world: World, dt: float):
         dt_scaled = dt / 100  # convert ms to seconds
 
         if self.dead:
@@ -243,13 +343,13 @@ class agent:
             return
 
         self.age += 0.001 * dt_scaled
-        if self.age >= self.genome['max_age']:
+        if self.age >= self.genome[GENOME_MAX_AGE]:
             self.remove_from_world(world)
             return
 
         if not self.waiting:
-            self.energy -= self.genome['metabolism_rate'] * dt_scaled
-            self.thirst += self.genome['metabolism_rate'] * 0.5 * dt_scaled
+            self.energy -= self.genome[GENOME_METABOLISM] * dt_scaled
+            self.thirst += self.genome[GENOME_METABOLISM] * 0.5 * dt_scaled
 
         if self.energy <= 0 and not self.dead:
             self.dead = True
@@ -262,9 +362,9 @@ class agent:
         current_speed = self.base_speed
 
         if self.energy < 0.2:
-            current_speed = max(0.1, self.genome['speed'] * (self.energy / 0.2))
+            current_speed = max(0.1, self.genome[GENOME_SPEED] * (self.energy / 0.2))
 
-        if self.age > self.genome['max_age'] * 0.75:
+        if self.age > self.genome[GENOME_MAX_AGE] * 0.75:
             if self.mating:
                 self.mating = False
                 self.colour = (255, 0, 255)
@@ -273,16 +373,16 @@ class agent:
             if self.leader:
                 self.leader = False
                 assign_pack_leader(world, self.pack)
-            age_factor = 1 - (self.age - self.genome['max_age'] * 0.75) / (self.genome['max_age'] * 0.25)
+            age_factor = 1 - (self.age - self.genome[GENOME_MAX_AGE] * 0.75) / (self.genome[GENOME_MAX_AGE] * 0.25)
             current_speed = max(0.1, current_speed * age_factor)
         self.pack_speed = current_speed
 
-        if self.genome['max_age'] * 0.4 < self.age <= self.genome['max_age'] * 0.75:
+        if self.genome[GENOME_MAX_AGE] * 0.4 < self.age <= self.genome[GENOME_MAX_AGE] * 0.75:
             self.mating = True
 
         if self.mated[0]:
             self.mated[1] += dt_scaled
-            if self.mated[1] > self.genome['max_age'] * 0.1:
+            if self.mated[1] > self.genome[GENOME_MAX_AGE] * 0.1:
                 self.mated = [False, 0]
 
         if self.waiting:
@@ -309,8 +409,8 @@ class agent:
                     self.colour = (255, 0, 255)
             return
 
-        food_threshold = 0.5 * (self.genome['metabolism_rate'] / 0.0005)
-        water_threshold = 0.5 * (self.genome['metabolism_rate'] / 0.0005)
+        food_threshold = 0.5 * (self.genome[GENOME_METABOLISM] / 0.0005)
+        water_threshold = 0.5 * (self.genome[GENOME_METABOLISM] / 0.0005)
 
         if self.thirst > water_threshold and self.target_type != 'water':
             self.colour = (0, 0, 255)
@@ -323,8 +423,13 @@ class agent:
             self.seek_resource(world, 'food')
 
         if self.mating and not self.mated[0]:
-            self.pack_speed = self.genome['speed']
+            self.pack_speed = self.genome[GENOME_SPEED]
             self.looking_for_mate(world)
+
+        if self.target is None and not self.waiting and not self.dead:
+            inputs = self.get_neural_inputs(world)
+            outputs = self.neural_network_decision(inputs)
+            self.apply_outputs(outputs, dt_scaled)
 
         if self.target is None:
             if self.pack is not None:
@@ -341,7 +446,7 @@ class agent:
                 if abs(direction[1]) > max_col / 2:
                     direction[1] -= math.copysign(max_col, direction[1])
                 direction = direction / np.linalg.norm(direction)
-                self.velocity = (direction * self.genome['speed']).tolist()
+                self.velocity = (direction * self.genome[GENOME_SPEED]).tolist()
             else:
                 if self.target_type in ('food', 'water'):
                     self.waiting = True
@@ -356,13 +461,13 @@ class agent:
         self.position[1] = new_col % len(world.grid[0])
 
 
-def assign_pack_leader(world, pack_number=None):
+def assign_pack_leader(world: World, pack_number: int =None):
     packs_to_assign = [world.packs[pack_number]] if pack_number is not None else world.packs
     for pack in packs_to_assign:
         if not pack:
             continue
         for a in pack:
-            a.base_speed = a.genome['speed']
+            a.base_speed = a.genome[GENOME_SPEED]
             a.leader = False
-        leader = max(pack, key=lambda a: a.genome['size'])
+        leader = max(pack, key=lambda a: a.genome[GENOME_SIZE])
         leader.leader = True

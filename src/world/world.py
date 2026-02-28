@@ -11,60 +11,54 @@ sand = (255, 255, 0)
 
 class World:
     def __init__(
-        self,
-        packs,
-        agents,
-        food,
-        grid=None,
-        screen=None,
-        map_width=100,
-        map_height=100,
-        plant_probability=0.025,
-        wind=None,
-        increasing_direction = True,
-        increasing_change = True,
-        seeds = []
+            self,
+            food: list,
+            grid=None,
+            screen=None,
+            map_width: int = 100,
+            map_height: int = 100,
+            plant_probability: float = 0.025,
+            wind: list[float] | None = None,
+            increasing_direction: bool = True,
+            increasing_change: bool = True,
+            seeds: list | None = None
     ):
         if wind is None:
-            wind = [0, 0]
+            wind = [0.0, 0.0]
+        if seeds is None:
+            seeds = []
+
         self.food = list(food)
         self.map_width = int(map_width)
         self.map_height = int(map_height)
 
         self.screen = screen or pygame.display.set_mode((700, 700))
-        screen_width, screen_height = self.screen.get_size()
+        self.screen_width, self.screen_height = self.screen.get_size()
 
         self.tile_size = max(
-            1, min(screen_width // self.map_width, screen_height // self.map_height)
+            1, min(self.screen_width // self.map_width, self.screen_height // self.map_height)
         )
-        self.offset_x = (screen_width - (self.tile_size * self.map_width)) // 2
-        self.offset_y = (screen_height - (self.tile_size * self.map_height)) // 2
+        self.offset_x = (self.screen_width - (self.tile_size * self.map_width)) // 2
+        self.offset_y = (self.screen_height - (self.tile_size * self.map_height)) // 2
 
         self.grid = grid or generate_map(
             generate_initial_map(self.map_height, self.map_width)
         )
-        self.packs, self.agents = add_packs(self.grid, num_packs=random.randint(2,5), pack_size=random.randint(3,8))
+        self.packs, self.agents = add_packs(self.grid, num_packs=random.randint(2, 5), pack_size=random.randint(3, 8))
         self.plants = add_plants(self.grid, plant_probability)
+        self.predators = [self.screen_width // 2, self.screen_height //2]
         self.seeds = seeds
         self.wind = wind
         self.increasingChange = increasing_change
         self.increasingDirection = increasing_direction
 
-    def draw(self):
-        self.make_map()
-        #for agent in self.agents:
-            #agent.draw()
-        for food in self.food:
-            food.draw()
-        pygame.display.flip()
-
-    def each_tick(self,time):
-        self.draw()
+    def each_tick(self, dt: float):
         self.update_wind(self.wind)
-        self.update_plants(time)
-        self.update_agents(time)
+        self.update_plants(dt)
+        self.update_agents(dt)
+        self.make_map()
 
-    def display_plants(self, plants):
+    def display_plants(self, plants: list):
         for plant in plants[0]:
             pixel_x = (self.offset_x
                        + plant.position[1] * self.tile_size
@@ -72,7 +66,6 @@ class World:
             pixel_y = (self.offset_y
                        + plant.position[0] * self.tile_size
                        + int(plant.tile_offset[0] * self.tile_size))
-
             pygame.draw.rect(
                 self.screen,
                 plant.colour,
@@ -84,7 +77,7 @@ class World:
                 ),
             )
 
-    def display_agents(self, agents):
+    def display_agents(self):
         for agent in self.agents:
             pygame.draw.circle(
                 self.screen,
@@ -96,19 +89,19 @@ class World:
                 max(1, self.tile_size // 4),
             )
 
-    def display_seeds(self, seeds):
-        for seed in seeds:
+    def display_seeds(self):
+        for seed in self.seeds:
             pygame.draw.circle(
                 self.screen,
                 (150, 75, 0),
                 (
-                    self.offset_x + seed.position[1] * self.tile_size + self.tile_size // 2,
-                    self.offset_y + seed.position[0] * self.tile_size + self.tile_size // 2,
+                    int(self.offset_x + seed.position[1] * self.tile_size + self.tile_size // 2),
+                    int(self.offset_y + seed.position[0] * self.tile_size + self.tile_size // 2),
                 ),
-                self.tile_size // 8,
+                max(1, self.tile_size // 8),
             )
 
-    def make_map(self, map_width=None, map_height=None):
+    def make_map(self, map_width: int | None = None, map_height: int | None = None):
         map_width = int(map_width) if map_width is not None else self.map_width
         map_height = int(map_height) if map_height is not None else self.map_height
 
@@ -137,11 +130,18 @@ class World:
                     ),
                 )
         self.display_plants(self.plants)
-        self.display_seeds(self.seeds)
-        self.display_agents(self.agents)
+        self.display_seeds()
+        self.display_agents()
+        screen_width, screen_height = self.screen.get_size()
+        pygame.draw.circle(
+            self.screen,
+            (255, 0, 0),
+            (self.predators[0], self.predators[1]),
+            self.tile_size//4,
+        )
         pygame.display.flip()
 
-    def update_wind(self, wind):
+    def update_wind(self, wind: list[float]):
         switch_probability = 0.1
         if random.random() < switch_probability:
             self.increasingDirection = not self.increasingDirection
@@ -158,30 +158,31 @@ class World:
 
         self.wind[0] = wind_direction
         self.wind[1] = wind_strength
-        #print(f"Wind direction: {wind_direction:.2f} degrees, Wind strength: {wind_strength:.2f}")
 
-    def update_agents(self, ticks):
+    def update_agents(self, dt: float):
         for agent in list(self.agents):
-            agent.update(self, ticks)
+            agent.update(self, dt)
 
-    def update_plants(self, ticks):
-        for plant in self.plants[0]:
-            plant.update(self, ticks)
-        for seed in self.seeds:
-            seed.update(self, ticks)
+    def update_plants(self, dt: float):
+        for plant in list(self.plants[0]):
+            plant.update(self, dt)
+        for seed in list(self.seeds):
+            seed.update(self, dt)
 
 
-newWorld = World([], [], [], None, map_width=100, map_height=100)
+
+
+newWorld = World([], map_width=100, map_height=100)
 assign_pack_leader(newWorld)
 
 clock = pygame.time.Clock()
 FPS = 60
+dt = 16
 
 done = False
 while not done:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             done = True
-    dt = clock.tick(FPS)
     newWorld.each_tick(dt)
-    newWorld.draw()
+    dt = clock.tick(FPS)

@@ -1,0 +1,7 @@
+GENOME_SIZE        = 0
+GENOME_SPEED       = 1
+GENOME_VISION      = 2
+GENOME_METABOLISM  = 3
+GENOME_MAX_AGE     = 4
+GENOME_NETWORK_START    = 5
+max_turn_rate = 1.0
