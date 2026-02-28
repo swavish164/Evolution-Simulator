@@ -9,12 +9,12 @@ from src.agents.agent_constants import *
 if TYPE_CHECKING:
     from src.world.world import World
 
-def add_packs(world: World, num_packs: int, pack_size: int):
+def add_packs(world: World, num_packs: int, pack_size: int, is_predator: bool):
     packs = []
     agents = []
     for i in range(num_packs):
         pack = []
-        pack_center = [random.uniform(0, len(world)), random.uniform(0, len(world[0]))]
+        pack_center = [random.uniform(0, len(world.grid)), random.uniform(0, len(world.grid[0]))]
         genome = None
         age = 0
         for _ in range(pack_size):
@@ -23,7 +23,8 @@ def add_packs(world: World, num_packs: int, pack_size: int):
                 pack_center[1] + random.uniform(-2, 2)
             ]
             energy = random.uniform(0.5, 1)
-            agent_instance = agent(position, [0, 0], energy, age, genome, i)
+            world.max_agent_id += 1
+            agent_instance = agent(position, [0, 0], energy, age, is_predator, 0, world.max_agent_id, genome, i)
             agent_instance.genome = agent_instance.random_genome()
             pack.append(agent_instance)
             agents.append(agent_instance)
@@ -31,7 +32,7 @@ def add_packs(world: World, num_packs: int, pack_size: int):
     return packs, agents
 
 class agent:
-    def __init__(self, position: list[float], velocity: list[float], energy: float, age: float,genome: dict | None = None,pack: int | None =None):
+    def __init__(self, position: list[float], velocity: list[float], energy: float, age: float, is_predator: bool, generation: int, agent_id = 0, genome: dict | None = None,pack: int | None =None):
         self.position = position
         self.velocity = velocity
         self.energy = energy
@@ -52,9 +53,14 @@ class agent:
         self.mated = [False, 0]
         self.leader = False
         self.pack_speed = 1.0
-        self.base_speed = None
+        self.base_speed = 1
         self.heading = random.uniform(0, 2* math.pi)
         self.speed = 0.5
+        self.is_predator = is_predator
+        self.generation = 0
+        self.agent_id = agent_id
+        self.parent_a_id = None
+        self.parent_b_id = None
 
     def random_genome(self, parents_genome:dict | None = None):
         if parents_genome is None:
@@ -172,37 +178,52 @@ class agent:
                 partner = None
                 closest = 1.0
                 for a in world.agents:
-                    if a is self or not a.mating:
+                    if a is self or not a.mating or a.mated[0]:
                         continue
                     d = self.wrapped_distance(a.position, world)
                     if d < closest:
                         closest = d
                         partner = a
 
-                if partner is not None:
+                if partner is not None and not(self.mated[0] or partner.mated[0]):
+                    self.mating = False
+                    self.mated = [True, 0]
+                    self.target = None
+                    self.target_type = None
+                    self.colour = (255, 0, 255)
+
+                    partner.mating = False
+                    partner.mated = [True, 0]
+                    partner.target = None
+                    partner.target_type = None
+                    partner.colour = (255, 0, 255)
+
                     number_of_children = random.choices([1, 2, 3], weights=[0.65, 0.25, 0.1])[0]
                     for _ in range(number_of_children):
                         child_genome = self.random_genome([partner.genome, self.genome])
-                        child_position = [(self.position[0] + partner.position[0]) / 2,
-                                          (self.position[1] + partner.position[1]) / 2]
-                        child_agent = agent(child_position, [0, 0], 1.0, 0, child_genome)
-                        world.agents.append(child_agent)
-                        for pack in world.packs:
-                            if self in pack:
-                                pack.append(child_agent)
-                                break
-                        print(f"New agent born at {child_position} with genome: {child_genome}")
-
-                    self.mating = False
-                    partner.mating = False
-                    self.colour = (255, 0, 255)
-                    partner.colour = (255, 0, 255)
-                    self.mated = [True, 0]
-                    partner.mated = [True, 0]
-                    self.target = None
-                    self.target_type = None
-                    partner.target = None
-                    partner.target_type = None
+                        child_position = [
+                            (self.position[0] + partner.position[0]) / 2,
+                            (self.position[1] + partner.position[1]) / 2
+                        ]
+                        generation = max(self.generation, partner.generation) + 1
+                        if len(world.agents) < 100:
+                            world.max_agent_id += 1
+                            child_agent = agent(child_position, [0, 0], 1.0, 0,
+                                                is_predator=False, generation=generation,
+                                                agent_id=world.max_agent_id, genome=child_genome)
+                            child_agent.base_speed = child_genome[GENOME_SPEED]
+                            child_agent.parent_a_id = self.agent_id
+                            child_agent.parent_b_id = partner.agent_id
+                            world.agents.append(child_agent)
+                            for pack in world.packs:
+                                if self in pack:
+                                    pack.append(child_agent)
+                                    break
+                            print(f"New agent born at {child_position} with genome: {child_agent.genome[:5]}")
+                            world.stats_logger.log_agent(child_agent, world.world_tick, child_agent.is_predator, child_agent.parent_a_id, child_agent.parent_b_id)
+                            world.stats_logger.log_writer.writerow([world.world_tick, (f"New {child_agent.is_predator} was born to agent a: {child_agent.parent_a_id} and agent b: {child_agent.parent_b_id}")])
+                        else:
+                            print("At 100 agents")
 
     def wrapped_distance(self, target: list[float], world: World):
         max_row = len(world.grid)
@@ -335,6 +356,7 @@ class agent:
 
     def update(self, world: World, dt: float):
         dt_scaled = dt / 100  # convert ms to seconds
+        current_speed = self.base_speed or self.genome[GENOME_SPEED]
 
         if self.dead:
             self.dead_time += dt_scaled
@@ -344,6 +366,7 @@ class agent:
 
         self.age += 0.001 * dt_scaled
         if self.age >= self.genome[GENOME_MAX_AGE]:
+            world.stats_logger.log_writer.writerow([world.world_tick, f"Agent: {self.agent_id} died at age: {self.age}"])
             self.remove_from_world(world)
             return
 
@@ -381,8 +404,8 @@ class agent:
             self.mating = True
 
         if self.mated[0]:
-            self.mated[1] += dt_scaled
-            if self.mated[1] > self.genome[GENOME_MAX_AGE] * 0.1:
+            self.mated[1] += 0.001 * dt_scaled
+            if self.mated[1] > (self.genome[GENOME_MAX_AGE] * 0.1):
                 self.mated = [False, 0]
 
         if self.waiting:

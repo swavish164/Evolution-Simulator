@@ -1,8 +1,12 @@
 import pygame
 from numpy import random
+
+from src.analysis.anaysis import LiveAnalysis
+from src.analysis.logging import StatsLogger
 from src.world.mapGeneration import generate_initial_map, generate_map
 from src.plants.plants import add_plants
 from src.agents.agents import add_packs, assign_pack_leader
+import csv
 
 grass = (21, 122, 17)
 water = (0, 0, 255)
@@ -21,7 +25,10 @@ class World:
             wind: list[float] | None = None,
             increasing_direction: bool = True,
             increasing_change: bool = True,
-            seeds: list | None = None
+            seeds: list | None = None,
+            max_agent_id = 0,
+            world_tick = 0,
+            stats_logger: StatsLogger | None = None
     ):
         if wind is None:
             wind = [0.0, 0.0]
@@ -32,31 +39,36 @@ class World:
         self.map_width = int(map_width)
         self.map_height = int(map_height)
 
-        self.screen = screen or pygame.display.set_mode((700, 700))
-        self.screen_width, self.screen_height = self.screen.get_size()
+        self.screen = screen or pygame.display.set_mode((1400, 700))
+        self.screen_width, self.screen_height = (700,700)
 
         self.tile_size = max(
             1, min(self.screen_width // self.map_width, self.screen_height // self.map_height)
         )
         self.offset_x = (self.screen_width - (self.tile_size * self.map_width)) // 2
         self.offset_y = (self.screen_height - (self.tile_size * self.map_height)) // 2
-
+        self.max_agent_id = max_agent_id
+        self.world_tick = world_tick
         self.grid = grid or generate_map(
             generate_initial_map(self.map_height, self.map_width)
         )
-        self.packs, self.agents = add_packs(self.grid, num_packs=random.randint(2, 5), pack_size=random.randint(3, 8))
+        self.packs, self.agents = add_packs(self, num_packs=random.randint(2, 5), pack_size=random.randint(5, 10), is_predator=False)
         self.plants = add_plants(self.grid, plant_probability)
-        self.predators = [self.screen_width // 2, self.screen_height //2]
+        self.predators = [self.map_height // 2, self.map_width // 2]
         self.seeds = seeds
         self.wind = wind
         self.increasingChange = increasing_change
         self.increasingDirection = increasing_direction
+        self.stats_logger = stats_logger
+        self.live_analysis = LiveAnalysis(self.screen, panel_x=700)
 
     def each_tick(self, dt: float):
         self.update_wind(self.wind)
         self.update_plants(dt)
         self.update_agents(dt)
         self.make_map()
+        self.live_analysis.update(self.world_tick)
+        pygame.display.flip()
 
     def display_plants(self, plants: list):
         for plant in plants[0]:
@@ -136,10 +148,12 @@ class World:
         pygame.draw.circle(
             self.screen,
             (255, 0, 0),
-            (self.predators[0], self.predators[1]),
+            (
+                int(self.offset_x + self.predators[1] * self.tile_size + self.tile_size // 2),
+                int(self.offset_y + self.predators[0] * self.tile_size + self.tile_size // 2),
+        ),
             self.tile_size//4,
         )
-        pygame.display.flip()
 
     def update_wind(self, wind: list[float]):
         switch_probability = 0.1
@@ -169,20 +183,21 @@ class World:
         for seed in list(self.seeds):
             seed.update(self, dt)
 
-
-
-
-newWorld = World([], map_width=100, map_height=100)
-assign_pack_leader(newWorld)
-
 clock = pygame.time.Clock()
 FPS = 60
 dt = 16
+pygame.init()
 
 done = False
-while not done:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            done = True
-    newWorld.each_tick(dt)
-    dt = clock.tick(FPS)
+with StatsLogger() as logger:
+    newWorld = World([], map_width=100, map_height=100, stats_logger=logger)
+    assign_pack_leader(newWorld)
+    while not done:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                done = True
+        newWorld.each_tick(dt)
+        newWorld.world_tick += 1
+        dt = clock.tick(FPS)
+
+pygame.quit()
