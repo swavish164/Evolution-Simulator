@@ -9,27 +9,6 @@ from src.agents.agent_constants import *
 if TYPE_CHECKING:
     from src.world.world import World
 
-def add_packs(world: World, num_packs: int, pack_size: int, is_predator: bool):
-    packs = []
-    agents = []
-    for i in range(num_packs):
-        pack = []
-        pack_center = [random.uniform(0, len(world.grid)), random.uniform(0, len(world.grid[0]))]
-        genome = None
-        age = 0
-        for _ in range(pack_size):
-            position = [
-                pack_center[0] + random.uniform(-2, 2),
-                pack_center[1] + random.uniform(-2, 2)
-            ]
-            energy = random.uniform(0.5, 1)
-            world.max_agent_id += 1
-            agent_instance = agent(position, [0, 0], energy, age, is_predator, 0, world.max_agent_id, genome, i)
-            agent_instance.genome = agent_instance.random_genome()
-            pack.append(agent_instance)
-            agents.append(agent_instance)
-        packs.append(pack)
-    return packs, agents
 
 class agent:
     def __init__(self, position: list[float], velocity: list[float], energy: float, age: float, is_predator: bool, generation: int, agent_id = 0, genome: dict | None = None,pack: int | None =None):
@@ -37,6 +16,7 @@ class agent:
         self.velocity = velocity
         self.energy = energy
         self.thirst = 0
+        self.is_predator = is_predator
         self.genome = genome if genome is not None else self.random_genome()
         self.age = age
         self.dead = False
@@ -48,19 +28,21 @@ class agent:
         self.waiting = False
         self.target_type = None
         self.target_plant = None
+        self.target_prey = None
+        self.target_mate = None
         self.target_dir = random.randint(0, 360)
-        self.colour = (255, 0, 255)
         self.mated = [False, 0]
         self.leader = False
         self.pack_speed = 1.0
         self.base_speed = 1
         self.heading = random.uniform(0, 2* math.pi)
         self.speed = 0.5
-        self.is_predator = is_predator
+        self.colour = (255, 0, 255) if self.is_predator else (255, 0, 0)
         self.generation = 0
         self.agent_id = agent_id
         self.parent_a_id = None
         self.parent_b_id = None
+        self.predator_alert = None  # Will store [predator_position, alert_time] when alerted
 
     def random_genome(self, parents_genome:dict | None = None):
         if parents_genome is None:
@@ -71,7 +53,9 @@ class agent:
                 random.uniform(0.0001,0.001), # metabolism rate
                 random.uniform(1,10), # max age
             ])
-            network_weights = np.random.randn(112) * 0.5
+            if self.is_predator:
+                attributes[GENOME_METABOLISM] *= 0.5
+            network_weights = np.random.randn(122) * 0.5
             return np.concatenate([attributes,network_weights])
 
         else:
@@ -82,17 +66,10 @@ class agent:
                 parents_genome[random.randint(0,1)][GENOME_METABOLISM] + random.uniform(-0.0005, 0.001),
                 parents_genome[random.randint(0,1)][GENOME_MAX_AGE] + random.uniform(-0.05, 0.1),
             ])
-            mask = np.random.random(112) > 0.5
+            mask = np.random.random(122) > 0.5
             network_weights = np.where(mask, parents_genome[0][GENOME_NETWORK_START:], parents_genome[1][GENOME_NETWORK_START:])
-            network_weights += np.random.randn(112) * 0.05
+            network_weights += np.random.randn(122) * 0.05
         return np.concatenate([attributes, network_weights])
-
-
-    #def sense_danger(self):
-        #for other_agent in world.agents:
-            #if other_agent is not self and np.linalg.norm(np.array(other_agent.position) - np.array(self.position)) < self.genome[2]:
-                # Implement logic to determine if the other agent is a threat
-        #return False
 
     def remove_from_world(self, world: World):
         if self in world.agents:
@@ -121,6 +98,9 @@ class agent:
         vision = int(self.genome[GENOME_VISION])
         current_closest = None
         current_closest_dist = float('inf')
+        current_plant = None
+        current_prey = None
+        current_mate = None
 
         for i in range(-vision, vision + 1):
             for j in range(-vision, vision + 1):
@@ -134,7 +114,7 @@ class agent:
                 tile = world.grid[check_tile[0]][check_tile[1]]
                 dist = np.linalg.norm(np.array(check_tile) - np.array(self.position))
 
-                if resource_type == 'food':
+                if resource_type == 'plant':
                     if tile in (0, 3):
                         plants_here = world.plants[1][check_tile[0]][check_tile[1]]
                         for plant in plants_here:
@@ -142,6 +122,16 @@ class agent:
                                 current_closest = check_tile
                                 current_closest_dist = dist
                                 current_plant = plant
+
+                if resource_type == 'food':
+                    for a in world.agents:
+                        if a is self or a.is_predator or a.dead:
+                            continue
+                        dist = self.wrapped_distance(a.position, world)
+                        if dist <= vision and dist < current_closest_dist:
+                            current_closest = a.position
+                            current_closest_dist = dist
+                            current_prey = a
 
                 elif resource_type == 'water':
                     if tile == 1 and dist < current_closest_dist:
@@ -156,11 +146,14 @@ class agent:
                         if dist <= vision and dist < current_closest_dist:
                             current_closest = a.position
                             current_closest_dist = dist
+                            current_mate = a
 
         if current_closest is not None:
             self.target = current_closest
             self.target_type = resource_type
-            self.target_plant = current_plant if resource_type == 'food' else None
+            self.target_plant = current_plant if resource_type == 'plant' else None
+            self.target_prey = current_prey if resource_type == 'food' else None
+            self.target_mate = current_mate if resource_type == 'mate' else None
             return True
         return False
 
@@ -172,30 +165,24 @@ class agent:
             if not found:
                 return
 
-        if self.target_type == 'mate' and self.target is not None:
+        if self.target_type == 'mate' and self.target_mate is not None:
             distance = self.wrapped_distance(self.target, world)
             if distance < 0.5:
-                partner = None
-                closest = 1.0
-                for a in world.agents:
-                    if a is self or not a.mating or a.mated[0]:
-                        continue
-                    d = self.wrapped_distance(a.position, world)
-                    if d < closest:
-                        closest = d
-                        partner = a
+                partner = self.target_mate
 
                 if partner is not None and not(self.mated[0] or partner.mated[0]):
                     self.mating = False
                     self.mated = [True, 0]
                     self.target = None
                     self.target_type = None
+                    self.target_mate = None
                     self.colour = (255, 0, 255)
 
                     partner.mating = False
                     partner.mated = [True, 0]
                     partner.target = None
                     partner.target_type = None
+                    partner.target_mate = None
                     partner.colour = (255, 0, 255)
 
                     number_of_children = random.choices([1, 2, 3], weights=[0.65, 0.25, 0.1])[0]
@@ -233,6 +220,14 @@ class agent:
         dr = min(dr, max_row - dr)
         dc = min(dc, max_col - dc)
         return math.sqrt(dr ** 2 + dc ** 2)
+
+    def broadcast_predator_alert(self, predator_position: list[float], world: World):
+        if self.pack is None or self.is_predator:
+            return
+
+        for pack_member in world.packs[self.pack]:
+            if pack_member is not self and not pack_member.dead:
+                pack_member.predator_alert = [predator_position, 0.0]
 
     def check_follow_leader(self, world: World):
         leader = next((a for a in world.packs[self.pack] if a.leader), None)
@@ -272,64 +267,8 @@ class agent:
             self.pick_random_target(world)
 
     def get_neural_inputs(self, world: World):
-        nearest_food_angle = 0.0
-        nearest_food_distance = 1.0
-        nearest_predator_angle = 0.0
-        nearest_predator_distance = 1.0
-        predator_visible = 0.0
-        nearest_herdmate_angle = 0.0
-        nearest_herdmate_distance = 1.0
-
-        vision = self.genome[GENOME_VISION]
-        best_food_dist = float('inf')
-        best_predator_dist = float('inf')
-        best_herdmate_dist = float('inf')
-
-        for i in range(-int(vision), int(vision) + 1):
-            for j in range(-int(vision), int(vision) + 1):
-                if i * i + j * j > vision * vision:
-                    continue
-                row = (int(self.position[0]) + i) % len(world.grid)
-                col = (int(self.position[1]) + j) % len(world.grid[0])
-
-                plants_here = world.plants[1][row][col]
-                for plant in plants_here:
-                    if plant.age > 0.1:
-                        dist = math.sqrt(i * i + j * j)
-                        if dist < best_food_dist:
-                            best_food_dist = dist
-                            nearest_food_angle = self._angle_to(plant.position)
-                            nearest_food_distance = dist / vision
-
-        for a in world.agents:
-            if a is self:
-                continue
-            dist = self.wrapped_distance(a.position, world)
-            if dist > vision:
-                continue
-
-            if a.pack != self.pack:
-                if dist < best_predator_dist:
-                    best_predator_dist = dist
-                    nearest_predator_angle = self._angle_to(a.position)
-                    nearest_predator_distance = dist / vision
-                    predator_visible = 1.0
-            else:
-                if dist < best_herdmate_dist:
-                    best_herdmate_dist = dist
-                    nearest_herdmate_angle = self._angle_to(a.position)
-                    nearest_herdmate_distance = dist / vision
-
-        return [
-            nearest_predator_angle,
-            nearest_predator_distance,
-            predator_visible,
-            nearest_food_angle,
-            nearest_food_distance,
-            nearest_herdmate_angle,
-            nearest_herdmate_distance,
-            self.energy,
-        ]
+        """Base neural input method - overridden by Prey and Predator subclasses"""
+        return [0.0] * 9  # Placeholder: subclasses should override this
 
     def _angle_to(self, target_position: list[float]):
         dr = target_position[0] - self.position[0]
@@ -339,10 +278,10 @@ class agent:
 
 
     def neural_network_decision(self, inputs):
-        W1 = self.genome[GENOME_NETWORK_START:GENOME_NETWORK_START+80].reshape(10, 8)
-        b1 = self.genome[GENOME_NETWORK_START+80:GENOME_NETWORK_START+90]
-        W2 = self.genome[GENOME_NETWORK_START+90:GENOME_NETWORK_START+110].reshape(2, 10)
-        b2 = self.genome[GENOME_NETWORK_START+110:GENOME_NETWORK_START+112]
+        W1 = self.genome[GENOME_NETWORK_START:GENOME_NETWORK_START+90].reshape(10, 9)
+        b1 = self.genome[GENOME_NETWORK_START+90:GENOME_NETWORK_START+100]
+        W2 = self.genome[GENOME_NETWORK_START+100:GENOME_NETWORK_START+120].reshape(2, 10)
+        b2 = self.genome[GENOME_NETWORK_START+120:GENOME_NETWORK_START+122]
         hidden = np.tanh(W1 @ inputs + b1)
         output = np.tanh(W2 @ hidden + b2)
         return output
@@ -360,7 +299,7 @@ class agent:
 
         if self.dead:
             self.dead_time += dt_scaled
-            if self.dead_time > 0.05:
+            if self.dead_time > 0.05 * 1/dt_scaled:
                 self.remove_from_world(world)
             return
 
@@ -371,8 +310,8 @@ class agent:
             return
 
         if not self.waiting:
-            self.energy -= self.genome[GENOME_METABOLISM] * dt_scaled
-            self.thirst += self.genome[GENOME_METABOLISM] * 0.5 * dt_scaled
+            self.energy -= self.genome[GENOME_METABOLISM] * dt_scaled * (current_speed / self.base_speed)
+            self.thirst += self.genome[GENOME_METABOLISM] * 0.5 * dt_scaled * (current_speed / self.base_speed)
 
         if self.energy <= 0 and not self.dead:
             self.dead = True
@@ -409,7 +348,7 @@ class agent:
                 self.mated = [False, 0]
 
         if self.waiting:
-            if self.target_type == 'food' and self.target_plant is not None:
+            if self.target_type == 'plant' and self.target_plant is not None:
                 self.eating_time += 0.01 * dt_scaled
                 if self.eating_time >= self.target_plant.size * 0.5:
                     self.energy = min(1.0, self.energy + self.target_plant.size * 0.5)
@@ -423,6 +362,27 @@ class agent:
                     self.target = None
                     self.target_type = None
                     self.colour = (255, 0, 255)
+
+            elif self.target_type == 'food' and self.target_prey is not None:
+                self.eating_time += 0.01 * dt_scaled
+                if self.eating_time >= 0.5:
+                    self.energy = min(1.0, self.energy + 0.5)
+                    prey_leader = self.target_prey.leader
+                    prey_pack = self.target_prey.pack
+                    prey_id = self.target_prey.agent_id
+                    self.target_prey = None
+                    self.eating_time = 0
+                    self.waiting = False
+                    self.target = None
+                    self.target_type = None
+                    self.colour = (255, 0, 255)
+                    if prey_leader:
+                        assign_pack_leader(world, prey_pack)
+                    if prey_id in [a.agent_id for a in world.agents]:
+                        world.agents = [a for a in world.agents if a.agent_id != prey_id]
+                        world.stats_logger.log_writer.writerow([world.world_tick, f"Agent: {prey_id} was killed by agent: {self.agent_id}"])
+                        print(f"Agent: {prey_id} was killed by agent: {self.agent_id}")
+
             elif self.target_type == 'water':
                 self.thirst = max(0, self.thirst - 0.01 * dt_scaled)
                 if self.thirst == 0:
@@ -440,10 +400,16 @@ class agent:
             self.pack_speed = self.base_speed
             self.seek_resource(world, 'water')
 
-        if self.energy < food_threshold and self.target_type != 'food':
-            self.colour = (255, 0, 0)
-            self.pack_speed = self.base_speed
-            self.seek_resource(world, 'food')
+        if not self.is_predator:
+            if self.energy < food_threshold and self.target_type != 'plant':
+                self.colour = (255, 0, 0)
+                self.pack_speed = self.base_speed
+                self.seek_resource(world, 'plant')
+
+        if self.is_predator:
+            if self.energy < food_threshold and self.target_type != 'food':
+                self.colour = (255, 100, 0)
+                self.seek_resource(world, 'food')
 
         if self.mating and not self.mated[0]:
             self.pack_speed = self.genome[GENOME_SPEED]
@@ -457,6 +423,8 @@ class agent:
         if self.target is None:
             if self.pack is not None:
                 self.check_follow_leader(world)
+            elif self.is_predator:
+                self.pick_random_target(world)
 
         if self.target is not None:
             distance = self.wrapped_distance(self.target, world)
@@ -471,7 +439,7 @@ class agent:
                 direction = direction / np.linalg.norm(direction)
                 self.velocity = (direction * self.genome[GENOME_SPEED]).tolist()
             else:
-                if self.target_type in ('food', 'water'):
+                if self.target_type in ('plant', 'water', 'food'):
                     self.waiting = True
                     self.velocity = [0, 0]
                 else:

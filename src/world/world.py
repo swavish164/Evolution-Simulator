@@ -5,7 +5,9 @@ from src.analysis.anaysis import LiveAnalysis
 from src.analysis.logging import StatsLogger
 from src.world.mapGeneration import generate_initial_map, generate_map
 from src.plants.plants import add_plants
-from src.agents.agents import add_packs, assign_pack_leader
+from src.agents.predator import add_predators
+from src.agents.prey import add_packs
+from src.agents.agents import assign_pack_leader
 import csv
 
 grass = (21, 122, 17)
@@ -47,19 +49,20 @@ class World:
         )
         self.offset_x = (self.screen_width - (self.tile_size * self.map_width)) // 2
         self.offset_y = (self.screen_height - (self.tile_size * self.map_height)) // 2
+        self.stats_logger = stats_logger
         self.max_agent_id = max_agent_id
         self.world_tick = world_tick
         self.grid = grid or generate_map(
             generate_initial_map(self.map_height, self.map_width)
         )
-        self.packs, self.agents = add_packs(self, num_packs=random.randint(2, 5), pack_size=random.randint(5, 10), is_predator=False)
+        self.packs, self.agents = add_packs(self, num_packs=random.randint(2, 5), pack_size=random.randint(5, 10))
         self.plants = add_plants(self.grid, plant_probability)
-        self.predators = [self.map_height // 2, self.map_width // 2]
+        self.predators = add_predators(self, num_predators=random.randint(3, 7))
+        self.agents = self.agents + self.predators
         self.seeds = seeds
         self.wind = wind
         self.increasingChange = increasing_change
         self.increasingDirection = increasing_direction
-        self.stats_logger = stats_logger
         self.live_analysis = LiveAnalysis(self.screen, panel_x=700)
 
     def each_tick(self, dt: float):
@@ -145,15 +148,6 @@ class World:
         self.display_seeds()
         self.display_agents()
         screen_width, screen_height = self.screen.get_size()
-        pygame.draw.circle(
-            self.screen,
-            (255, 0, 0),
-            (
-                int(self.offset_x + self.predators[1] * self.tile_size + self.tile_size // 2),
-                int(self.offset_y + self.predators[0] * self.tile_size + self.tile_size // 2),
-        ),
-            self.tile_size//4,
-        )
 
     def update_wind(self, wind: list[float]):
         switch_probability = 0.1
