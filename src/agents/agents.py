@@ -9,7 +9,6 @@ from src.agents.agent_constants import *
 if TYPE_CHECKING:
     from src.world.world import World
 
-
 class agent:
     def __init__(self, position: list[float], velocity: list[float], energy: float, age: float, is_predator: bool, generation: int, agent_id = 0, genome: dict | None = None,pack: int | None =None):
         self.position = position
@@ -42,7 +41,10 @@ class agent:
         self.agent_id = agent_id
         self.parent_a_id = None
         self.parent_b_id = None
-        self.predator_alert = None  # Will store [predator_position, alert_time] when alerted
+        self.predator_alert = None
+        self.injured = False
+        self.injury_time = 0.0
+        self.is_juvenile = True if is_predator else False
 
     def random_genome(self, parents_genome:dict | None = None):
         if parents_genome is None:
@@ -201,16 +203,61 @@ class agent:
                             child_agent.base_speed = child_genome[GENOME_SPEED]
                             child_agent.parent_a_id = self.agent_id
                             child_agent.parent_b_id = partner.agent_id
+
+                            if self.pack is None and partner.pack is None:
+                                new_pack_idx = len(world.packs)
+                                new_pack = [self, partner, child_agent]
+                                world.packs.append(new_pack)
+                                self.pack = new_pack_idx
+                                partner.pack = new_pack_idx
+                                child_agent.pack = new_pack_idx
+                                assign_pack_leader(world, new_pack_idx)
+                            elif self.pack is not None:
+                                child_agent.pack = self.pack
+                                world.packs[self.pack].append(child_agent)
+                            elif partner.pack is not None:
+                                child_agent.pack = partner.pack
+                                world.packs[partner.pack].append(child_agent)
+
                             world.agents.append(child_agent)
-                            for pack in world.packs:
-                                if self in pack:
-                                    pack.append(child_agent)
-                                    break
                             print(f"New agent born at {child_position} with genome: {child_agent.genome[:5]}")
                             world.stats_logger.log_agent(child_agent, world.world_tick, child_agent.is_predator, child_agent.parent_a_id, child_agent.parent_b_id)
                             world.stats_logger.log_writer.writerow([world.world_tick, (f"New {child_agent.is_predator} was born to agent a: {child_agent.parent_a_id} and agent b: {child_agent.parent_b_id}")])
                         else:
                             print("At 100 agents")
+
+                    if self.is_predator and len(world.agents) < 150:
+                        number_of_children = random.choices([1, 2], weights=[0.7, 0.3])[0]
+                        for _ in range(number_of_children):
+                            from src.agents.predator import Predator
+                            child_genome = self.random_genome([partner.genome, self.genome])
+                            child_position = [
+                                (self.position[0] + partner.position[0]) / 2,
+                                (self.position[1] + partner.position[1]) / 2
+                            ]
+                            generation = max(self.generation, partner.generation) + 1
+                            world.max_agent_id += 1
+                            child_predator = Predator(child_position, [0, 0], 1.0, 0,
+                                                     generation=generation,
+                                                     agent_id=world.max_agent_id,
+                                                     genome=child_genome,
+                                                     pack=self.pack)
+                            child_predator.base_speed = child_genome[GENOME_SPEED]
+                            child_predator.parent_a_id = self.agent_id
+                            child_predator.parent_b_id = partner.agent_id
+                            world.agents.append(child_predator)
+                            if self.pack is not None:
+                                world.packs[self.pack].append(child_predator)
+                            print(f"New predator born at {child_position}")
+                            world.stats_logger.log_agent(child_predator, world.world_tick, True, child_predator.parent_a_id, child_predator.parent_b_id)
+                            world.stats_logger.log_writer.writerow([world.world_tick, (f"New predator born to {self.agent_id} and {partner.agent_id}")])
+
+
+    def get_terrain_friction(self, world: World):
+        tile = world.grid[int(self.position[0]) % len(world.grid)][int(self.position[1]) % len(world.grid[0])]
+        if tile == 3:
+            return 0.6
+        return 1.0
 
     def wrapped_distance(self, target: list[float], world: World):
         max_row = len(world.grid)
@@ -221,30 +268,32 @@ class agent:
         dc = min(dc, max_col - dc)
         return math.sqrt(dr ** 2 + dc ** 2)
 
-    def broadcast_predator_alert(self, predator_position: list[float], world: World):
+    def broadcast_predator_alert(self, predator_position: list[float], predator_speed: float, world: World):
         if self.pack is None or self.is_predator:
             return
+        alert_range = int(self.genome[GENOME_VISION] * (0.5 + predator_speed * 0.5))
 
         for pack_member in world.packs[self.pack]:
             if pack_member is not self and not pack_member.dead:
-                pack_member.predator_alert = [predator_position, 0.0]
+                dist = self.wrapped_distance(pack_member.position, world)
+                if dist < alert_range:
+                    pack_member.predator_alert = [predator_position, 0.0]
 
     def check_follow_leader(self, world: World):
         leader = next((a for a in world.packs[self.pack] if a.leader), None)
         following = [a for a in world.packs[self.pack] if a.target_type in ('wander', 'return', 'leader') and not a.dead]
-        if following:
-            self.pack_speed = min(a.base_speed for a in following)
-        else:
-            self.pack_speed = self.base_speed
 
         if self.leader:
             self.colour = (255, 215, 0)
             pack_members = [a for a in world.packs[self.pack] if a is not self and not a.dead]
             if pack_members:
                 max_dist = max(self.wrapped_distance(a.position, world) for a in pack_members)
-                if max_dist > 8:
-                    self.pack_speed = 0
-                    return
+                if max_dist > 6:
+                    self.pack_speed = self.base_speed * 0.5
+                else:
+                    self.pack_speed = self.base_speed
+            else:
+                self.pack_speed = self.base_speed
             self.pick_random_target(world)
 
         elif leader is not None:
@@ -263,12 +312,12 @@ class agent:
                     (self.position[1] + random.uniform(-2, 2)) % len(world.grid[0])
                 ]
                 self.target_type = 'wander'
+                self.pack_speed = self.base_speed
         else:
             self.pick_random_target(world)
 
     def get_neural_inputs(self, world: World):
-        """Base neural input method - overridden by Prey and Predator subclasses"""
-        return [0.0] * 9  # Placeholder: subclasses should override this
+        return [0.0] * 9
 
     def _angle_to(self, target_position: list[float]):
         dr = target_position[0] - self.position[0]
@@ -308,6 +357,16 @@ class agent:
             world.stats_logger.log_writer.writerow([world.world_tick, f"Agent: {self.agent_id} died at age: {self.age}"])
             self.remove_from_world(world)
             return
+
+        if self.injured:
+            self.injury_time += dt_scaled
+            if self.injury_time > 2.0:
+                self.injured = False
+                self.injury_time = 0.0
+
+        if self.is_predator:
+            max_juvenile_age = self.genome[GENOME_MAX_AGE] * 0.1
+            self.is_juvenile = self.age < max_juvenile_age
 
         if not self.waiting:
             self.energy -= self.genome[GENOME_METABOLISM] * dt_scaled * (current_speed / self.base_speed)
@@ -364,7 +423,21 @@ class agent:
                     self.colour = (255, 0, 255)
 
             elif self.target_type == 'food' and self.target_prey is not None:
+                if self.is_juvenile:
+                    self.target = None
+                    self.target_type = None
+                    return
+
                 self.eating_time += 0.01 * dt_scaled
+
+                if self.eating_time >= 0.2 and not self.target_prey.injured:
+                    self.target_prey.injured = True
+                    self.target_prey.injury_time = 0.0
+                    self.eating_time = 0
+                    self.target = None
+                    self.target_type = None
+                    return
+
                 if self.eating_time >= 0.5:
                     self.energy = min(1.0, self.energy + 0.5)
                     prey_leader = self.target_prey.leader
@@ -401,19 +474,75 @@ class agent:
             self.seek_resource(world, 'water')
 
         if not self.is_predator:
-            if self.energy < food_threshold and self.target_type != 'plant':
+            vision = self.genome[GENOME_VISION]
+            closest_predator = None
+            closest_dist = float('inf')
+            has_alert = self.predator_alert is not None
+
+            for a in world.agents:
+                if a.is_predator and not a.dead:
+                    dist = self.wrapped_distance(a.position, world)
+                    if dist < vision and dist < closest_dist:
+                        closest_predator = a.position
+                        closest_dist = dist
+
+            if self.pack is not None:
+                pack_members = [a for a in world.packs[self.pack] if a is not self and not a.dead]
+                if pack_members:
+                    min_dist_to_pack = min(self.wrapped_distance(member.position, world) for member in pack_members)
+                    if min_dist_to_pack > vision * 2:
+                        world.packs[self.pack].remove(self)
+                        self.pack = None
+
+            if closest_predator is not None or has_alert:
+                threat_pos = closest_predator if closest_predator is not None else self.predator_alert[0]
+                direction = np.array(self.position) - np.array(threat_pos)
+                norm = np.linalg.norm(direction)
+                if norm > 0.01:
+                    direction = direction / norm
+                    flee_distance = int(vision) * 2
+                    flee_target = self.position + direction * flee_distance
+                    self.target = flee_target.tolist()
+                    self.target_type = 'flee'
+                    self.colour = (100, 255, 100)
+            elif self.thirst > water_threshold and self.target_type != 'water':
+                self.colour = (0, 0, 255)
+                self.seek_resource(world, 'water')
+            elif self.energy < food_threshold and self.target_type != 'plant':
+                if self.energy < food_threshold * 0.5 and self.pack is not None:
+                    world.packs[self.pack].remove(self)
+                    self.pack = None
                 self.colour = (255, 0, 0)
-                self.pack_speed = self.base_speed
                 self.seek_resource(world, 'plant')
+            else:
+                if self.pack is None:
+                    self.target = None
+                    self.target_type = None
+                self.colour = (255, 0, 0)
 
         if self.is_predator:
             if self.energy < food_threshold and self.target_type != 'food':
                 self.colour = (255, 100, 0)
                 self.seek_resource(world, 'food')
+            else:
+                self.target = None
+                self.target_type = None
 
         if self.mating and not self.mated[0]:
             self.pack_speed = self.genome[GENOME_SPEED]
             self.looking_for_mate(world)
+
+        if not self.is_predator and self.pack is None:
+            for pack_idx, pack in enumerate(world.packs):
+                for member in pack:
+                    if not member.dead:
+                        dist = self.wrapped_distance(member.position, world)
+                        if dist < self.genome[GENOME_VISION]:
+                            self.pack = pack_idx
+                            world.packs[pack_idx].append(self)
+                            break
+                if self.pack is not None:
+                    break
 
         if self.target is None and not self.waiting and not self.dead:
             inputs = self.get_neural_inputs(world)
@@ -423,7 +552,7 @@ class agent:
         if self.target is None:
             if self.pack is not None:
                 self.check_follow_leader(world)
-            elif self.is_predator:
+            else:
                 self.pick_random_target(world)
 
         if self.target is not None:
@@ -446,8 +575,11 @@ class agent:
                     self.target = None
                     self.target_type = None
 
-        new_row = self.position[0] + self.velocity[0] * self.pack_speed * dt_scaled
-        new_col = self.position[1] + self.velocity[1] * self.pack_speed * dt_scaled
+        injury_slowdown = 0.3 if self.injured else 1.0
+        terrain_friction = self.get_terrain_friction(world)
+
+        new_row = self.position[0] + self.velocity[0] * self.pack_speed * injury_slowdown * terrain_friction * dt_scaled
+        new_col = self.position[1] + self.velocity[1] * self.pack_speed * injury_slowdown * terrain_friction * dt_scaled
         self.position[0] = new_row % len(world.grid)
         self.position[1] = new_col % len(world.grid[0])
 

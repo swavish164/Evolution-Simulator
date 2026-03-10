@@ -73,7 +73,7 @@ class Prey(agent):
                     nearest_predator_angle = self._angle_to(a.position)
                     nearest_predator_distance = dist / vision
                     predator_visible = 1.0
-                    self.broadcast_predator_alert(a.position, world)
+                    self.broadcast_predator_alert(a.position, a.speed, world)
             else:
                 if dist < best_herdmate_dist:
                     best_herdmate_dist = dist

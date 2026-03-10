@@ -2,13 +2,12 @@ import pygame
 from numpy import random
 
 from src.analysis.anaysis import LiveAnalysis
-from src.analysis.logging import StatsLogger
+from src.analysis.logging import StatsLogger, ConsoleLogDisplay
 from src.world.mapGeneration import generate_initial_map, generate_map
 from src.plants.plants import add_plants
 from src.agents.predator import add_predators
 from src.agents.prey import add_packs
 from src.agents.agents import assign_pack_leader
-import csv
 
 grass = (21, 122, 17)
 water = (0, 0, 255)
@@ -41,13 +40,13 @@ class World:
         self.map_width = int(map_width)
         self.map_height = int(map_height)
 
-        self.screen = screen or pygame.display.set_mode((1400, 700))
+        self.screen = screen or pygame.display.set_mode((1800, 700))
         self.screen_width, self.screen_height = (700,700)
 
         self.tile_size = max(
             1, min(self.screen_width // self.map_width, self.screen_height // self.map_height)
         )
-        self.offset_x = (self.screen_width - (self.tile_size * self.map_width)) // 2
+        self.offset_x = ((self.screen_width - (self.tile_size * self.map_width)) // 2) + 400
         self.offset_y = (self.screen_height - (self.tile_size * self.map_height)) // 2
         self.stats_logger = stats_logger
         self.max_agent_id = max_agent_id
@@ -55,22 +54,31 @@ class World:
         self.grid = grid or generate_map(
             generate_initial_map(self.map_height, self.map_width)
         )
-        self.packs, self.agents = add_packs(self, num_packs=random.randint(2, 5), pack_size=random.randint(5, 10))
+        self.packs, self.agents = add_packs(self, num_packs=random.randint(4, 6), pack_size=random.randint(5, 10))
         self.plants = add_plants(self.grid, plant_probability)
-        self.predators = add_predators(self, num_predators=random.randint(3, 7))
+        self.predators = add_predators(self, num_predators=random.randint(3, 4))
         self.agents = self.agents + self.predators
+        for pack_idx in range(len(self.packs)):
+            assign_pack_leader(self, pack_idx)
         self.seeds = seeds
         self.wind = wind
         self.increasingChange = increasing_change
         self.increasingDirection = increasing_direction
-        self.live_analysis = LiveAnalysis(self.screen, panel_x=700)
+        self.live_analysis = LiveAnalysis(self.screen, panel_x=700 + 400)
+        self.console = ConsoleLogDisplay(self.screen, stats_logger=self.stats_logger)
 
     def each_tick(self, dt: float):
         self.update_wind(self.wind)
         self.update_plants(dt)
         self.update_agents(dt)
+
+        if self.world_tick % 500 == 0 and self.stats_logger:
+            self.stats_logger.log_population_stats(self, self.world_tick)
+
         self.make_map()
         self.live_analysis.update(self.world_tick)
+        self.console.update()
+        self.console.render()
         pygame.display.flip()
 
     def display_plants(self, plants: list):
@@ -185,7 +193,6 @@ pygame.init()
 done = False
 with StatsLogger() as logger:
     newWorld = World([], map_width=100, map_height=100, stats_logger=logger)
-    assign_pack_leader(newWorld)
     while not done:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
