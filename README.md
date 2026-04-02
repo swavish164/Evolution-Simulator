@@ -18,6 +18,10 @@ Each agent has a genome controlling their size, speed, vision range, metabolism,
 - **Mating & genetics** - offspring inherit and mutate parent traits
 - **Live stats** - track population data and individual agent info as the sim runs
 
+## Video Demo
+
+https://github.com/user-attachments/assets/5a69fc60-d205-4cf8-8fdb-d3c990b34ccd
+
 ## Getting started
 
 ```bash
